@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ESP32-YOLOv8n训练系统</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f8f9fa;
+            margin: 0;
+            padding: 0;
+        }
+        .train-panel {
+            max-width: 96%;
+            margin: 2rem auto;
+            padding: 2rem;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        /* 训练参数行样式优化 */
+        .params-row {
+            display: flex;
+            gap: 1rem;
+            align-items: flex-end;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+        }
+        .param-group {
+            flex: 1;
+            min-width: 120px; 
+        }
+        .param-group-wide {
+            flex: 2;
+        }
+        .form-label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+        }        /* 输入控件样式微调 */
+        .form-control {
+            margin-top: 0.3rem;
+            padding: 0.6rem 0.8rem;
+            border: 1px solid #ced4da; 
+            border-radius: 6px; 
+        }
+        
+        .btn {
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .btn:disabled {
+            opacity: 0.65;
+            background-color: #6c757d !important; /* Bootstrap的灰色 */
+            cursor: not-allowed;
+        }
+        #split-btn:disabled {
+            background-color: #6c757d;
+        }
+        #train-btn:disabled {
+            background-color: #6c757d;
+        }
+        .btn-primary {
+            background-color: #0d6efd;
+            color: white;
+        }
+        .btn-success {
+            background-color: #198754;
+            color: white;
+        }
+        .progress {
+            height: 1rem;
+            background-color: #e9ecef;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .progress-bar {
+            height: 100%;
+            background-color: #0d6efd;
+            transition: width 0.3s;
+        }
+        #log-output {
+            height: 200px;
+            overflow-y: auto;
+            background-color: #212529;
+            color: #f8f9fa;
+            padding: 1rem;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            font-family: monospace;
+        }
+        .text-center {
+            text-align: center;
+        }
+        .mb-2 { margin-bottom: 0.5rem; }
+        .mb-3 { margin-bottom: 1rem; }
+        .mb-4 { margin-bottom: 1.5rem; }
+        .mt-2 { margin-top: 0.5rem; }
+        .mt-4 { margin-top: 1.5rem; }
+        .d-flex { display: flex; }
+        .gap-2 { gap: 0.5rem; }
+        .rounded { border-radius: 4px; }
+        .p-3 { padding: 1rem; }
+        .bg-dark { background-color: #212529; }
+        .text-white { color:white; }
+    </style>
+</head>
+<body>
+    <div class="train-panel">
+        <h2 class="text-center mb-4">ESP32-YOLOv8n训练系统</h2>
+        
+        <!-- 文件上传区 -->
+        <div class="mb-4">
+            <button id="upload-btn" class="btn btn-primary">选择文件 (.zip)</button>
+            <input type="file" id="file-upload" accept=".zip" hidden>
+            <div id="file-name" class="mt-2">未选择文件</div>
+        </div>
+
+        <!-- 训练配置区 -->
+        <div class="mb-4">
+            <h5 class="mb-3">训练参数</h5>
+            <div class="params-row">
+                <!-- 目标类别 -->
+                <div class="param-group param-group-wide">
+                    <label class="form-label">目标类别（逗号分隔）</label>
+                    <input type="text" class="form-control" id="classes" value="aa,bb">
+                </div>
+                
+                <!-- 输入尺寸 -->
+                <div class="param-group">
+                    <label class="form-label">输入尺寸</label>
+                    <select class="form-control" id="imgsz">
+                        <option value="224">224×224</option>
+                        <option value="160">160×160</option>
+                        <option value="96">96×96</option>
+                    </select>
+                </div>
+                
+                <!-- 训练轮次 -->
+                <div class="param-group">
+                    <label class="form-label">训练轮次</label>
+                    <input type="number" class="form-control" id="epochs" value="50" min="1">
+                </div>
+                
+                <!-- 批次大小 -->
+                <div class="param-group">
+                    <label class="form-label">批次大小</label>
+                    <input type="number" class="form-control" id="batch" value="8" min="1">
+                </div>
+            </div>
+        </div>
+
+        <!-- 操作按钮 -->
+        <div class="d-flex gap-2 mb-4">
+            <button id="split-btn" class="btn btn-success">分割数据集</button>
+            <button id="train-btn" class="btn btn-primary">开始训练</button>
+        </div>
+
+        <!-- 进度显示和日志输出 -->
+        <div class="progress mb-2">
+            <div id="progress-bar" class="progress-bar" style="width: 0%"></div>
+        </div>
+        <div class="mt-4">
+            <h5>训练日志</h5>
+            <pre id="log-output" class="p-3 bg-dark text-white rounded"></pre>
+        </div>
+    </div>
+
+    <script>
+        // 防止重复点击的处理函数
+        function preventMultipleClicks(button, callback) {
+            return async function() {
+                if (button.disabled) return;
+                
+                try {
+                    button.disabled = true;
+                    await callback.apply(this, arguments);
+                } finally {
+                    button.disabled = false;
+                }
+            };
+        }
+
+        // 文件上传处理
+        document.getElementById('file-upload').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            document.getElementById('file-name').textContent = file ? file.name : '未选择文件';
+        });
+
+        // 自动分割数据集
+        document.getElementById('split-btn').addEventListener('click', preventMultipleClicks(
+            document.getElementById('split-btn'),
+            async () => {
+                const fileInput = document.getElementById('file-upload');
+                if (!fileInput.files[0]) return alert('请先选择ZIP文件');
+                
+                const formData = new FormData();
+                formData.append('dataset', fileInput.files[0]);
+                
+                try {
+                    const response = await fetch('/split', { method: 'POST', body: formData });
+                    const result = await response.json();
+                    log(`数据集分割完成：训练集${result.train_count}张，验证集${result.val_count}张`);
+                } catch (error) {
+                    log(`分割失败：${error.message}`);
+                }
+            }
+        ));
+
+        // 开始训练
+        document.getElementById('train-btn').addEventListener('click', preventMultipleClicks(
+            document.getElementById('train-btn'),
+            async () => {
+                const params = {
+                    classes: document.getElementById('classes').value.split(','),
+                    imgsz: parseInt(document.getElementById('imgsz').value),
+                    epochs: parseInt(document.getElementById('epochs').value),
+                    batch: parseInt(document.getElementById('batch').value)
+                };
+                
+                try {
+                    const response = await fetch('/train', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(params)
+                    });
+                    
+                    const reader = response.body.getReader();
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        log(new TextDecoder().decode(value));
+                    }
+                } catch (error) {
+                    log(`训练错误：${error.message}`);
+                }
+            }
+        ));
+
+        document.getElementById('upload-btn').addEventListener('click', () => {
+            document.getElementById('file-upload').click();
+        });
+
+        function log(message) {
+            const logElement = document.getElementById('log-output');
+            logElement.textContent += message + '\n';
+            
+            // 动态限制行数
+            const lineHeight = parseInt(window.getComputedStyle(logElement).lineHeight);
+            const maxLines = 15;
+            logElement.style.maxHeight = `${lineHeight * maxLines}px`;
+            logElement.style.overflowY = 'auto';
+            logElement.scrollTop = logElement.scrollHeight;
+        }        
+    </script>
+</body>
+</html>

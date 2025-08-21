@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>ESP32-S3视频流捕获</title>
+    <style>
+        body { 
+            font-family: Arial; 
+            text-align: center; 
+            background-color: #f0f0f0; 
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            min-height: 100vh;
+            margin: 0;
+        }
+        h1 { 
+            color: #333; 
+            margin-bottom: 20px;
+        }
+        #stream { 
+            max-width: 100%; 
+            border: 3px solid #4CAF50; 
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        #button-container {
+            display: flex;
+            justify-content: center;
+            width: 100%;
+            margin-bottom: 20px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: all 0.3s;
+            margin: 0 10px;
+        }
+        button:hover { 
+            background-color: #45a049; 
+            transform: scale(1.05); 
+        }
+        button:disabled { 
+            opacity: 0.6; 
+            cursor: not-allowed; 
+        }
+        #control-panel {
+            width: 80%;
+            max-width: 600px;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        #response-box {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            min-height: 100px;
+            text-align: left;
+            font-family: monospace;
+            white-space: pre-wrap;
+            overflow-y: auto;
+            max-height: 200px;
+        }
+        #input-panel {
+            display: flex;
+            margin-top: 15px;
+        }
+        #command-input {
+            flex-grow: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px 0 0 4px;
+            font-size: 14px;
+        }
+        #send-btn {
+            border-radius: 0 4px 4px 0;
+            padding: 10px 15px;
+        }
+    </style>
+</head>
+<body>
+    <h1>ESP32-CAM 实时流捕获</h1>
+    <img id="stream" src="/stream">
+    
+    <div id="control-panel">
+        <div id="button-container">
+            <button id="captureBtn" onclick="captureImage()">保存当前帧</button>
+        </div>
+        
+        <div id="response-box">等待数据...</div>
+        
+        <div id="input-panel">
+            <input type="text" id="command-input" placeholder="输入控制命令...">
+            <button id="send-btn" onclick="sendCommand()">发送</button>
+        </div>
+    </div>
+
+    <script>
+        const captureBtn = document.getElementById('captureBtn');
+        const responseBox = document.getElementById('response-box');
+        const commandInput = document.getElementById('command-input');
+        const sendBtn = document.getElementById('send-btn');
+        
+        // 存储自定义头部信息
+        let customHeaders = {};
+        
+        // 视频流错误处理
+        document.getElementById('stream').onerror = function() {
+            console.log("视频流中断，尝试重连...");
+            setTimeout(() => {
+                this.src = `/stream?t=${Date.now()}`;
+            }, 1000);
+        };
+        
+        // 使用fetch API获取视频流并解析头部
+        async function fetchStreamWithHeaders() {
+            try {
+                const response = await fetch('/stream');
+                if (!response.ok) throw new Error('Network response was not ok');
+                
+                // 解析自定义头部
+                const headers = {};
+                response.headers.forEach((value, key) => {
+                    if (key.startsWith('X-')) { // 只收集X-开头的自定义头部
+                        headers[key] = value;
+                    }
+                });
+                
+                // 更新显示
+                updateResponseBox(headers);
+                
+                // 返回blob用于显示
+                return await response.blob();
+            } catch (error) {
+                console.error('Error fetching stream:', error);
+                return null;
+            }
+        }
+        
+        // 更新响应框显示
+        function updateResponseBox(headers) {
+            let displayText = '';
+            for (const [key, value] of Object.entries(headers)) {
+                displayText += `${key}: ${value}\n`;
+            }
+            responseBox.textContent = displayText || '未检测到自定义头部信息';
+            customHeaders = headers;
+        }
+        
+        /*
+        // 发送命令到ESP32
+        async function sendCommand() {
+            const command = commandInput.value.trim();
+            if (!command) return;
+            if (!command.includes(':')) {
+                responseBox.textContent = '命令格式错误，应为"key:value"';
+                return;
+            }
+
+            sendBtn.disabled = true;
+            try {
+                // 将参数编码后拼接到URL
+                const encodedCmd = encodeURIComponent(command);
+                const response = await fetch(`/control?cmd=${encodedCmd}`, {
+                    method: 'GET',  // 显式声明GET方法
+                    headers: {
+                        'Accept': 'application/json'  // 声明期望的响应格式
+                    }
+                });
+                
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const result = await response.json();
+                responseBox.textContent = `命令响应:\n${JSON.stringify(result, null, 2)}`;
+            } catch (error) {
+                responseBox.textContent = `命令发送失败: ${error.message}`;
+            } finally {
+                sendBtn.disabled = false;
+                commandInput.value = '';
+            }
+        }      
+        */ 
+async function sendCommand() {
+    // 使用固定命令替代用户输入
+    const fixedCommand = "test:123"; // 固定测试值
+    
+    sendBtn.disabled = true;
+    try {
+        const encodedCmd = encodeURIComponent(fixedCommand);
+        const response = await fetch(`/control?cmd=${encodedCmd}`, {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' }
+        });
+        
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const result = await response.json();
+        responseBox.textContent = `命令响应:\n${JSON.stringify(result, null, 2)}`;
+    } catch (error) {
+        responseBox.textContent = `命令发送失败: ${error.message}`;
+    } finally {
+        sendBtn.disabled = false;
+    }
+}       
+        // 初始化时启动头部检测
+        setInterval(async () => {
+            const blob = await fetchStreamWithHeaders();
+            if (blob) {
+                document.getElementById('stream').src = URL.createObjectURL(blob);
+            }
+        }, 1000);
+        
+        // 原有截图功能保持不变
+        function getTimestamp() {
+            const now = new Date();
+            return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_` +
+                `${String(now.getHours()).padStart(2,'0')}-${String(now.getMinutes()).padStart(2,'0')}-${String(now.getSeconds()).padStart(2,'0')}`;
+        }
+
+        function captureImage() {
+            captureBtn.disabled = true;
+            const streamImg = document.getElementById('stream');
+            const timestamp = getTimestamp();
+            
+            const canvas = document.createElement('canvas');
+            canvas.width = streamImg.naturalWidth;
+            canvas.height = streamImg.naturalHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(streamImg, 0, 0);
+            
+            canvas.toBlob(blob => {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `esp32_frame_${timestamp}.jpg`;
+                document.body.appendChild(a);
+                a.click();
+                
+                setTimeout(() => {
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    captureBtn.disabled = false;
+                    alert(`已保存: ${a.download}`);
+                }, 100);
+            }, 'image/jpeg', 0.9);
+        }
+    </script>
+</body>
+</html>

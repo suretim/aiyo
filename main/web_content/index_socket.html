@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>ESP32-S3 CAM</title>
+    <style>
+        /* 全局样式 */
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        
+        /* 视频容器 */
+        .video-container {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 20px;
+            background-color: #fff;
+            padding: 10px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        
+        #videoCanvas {
+            max-width: 100%;
+            max-height: 60vh;
+            border: 2px solid #3498db;
+            border-radius: 4px;
+            object-fit: contain;
+        }
+        /* 控制面板 */
+        .control-panel {
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        
+        .control-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        
+        input[type="text"], input[type="number"] {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.3s;
+        }
+        
+        button:hover {
+            background-color: #2980b9;
+        }
+        
+        /* 状态显示 */
+        #status {
+            margin-top: 15px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            border-left: 4px solid #3498db;
+            font-size: 14px;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+        
+        /* 响应式设计 */
+        @media (max-width: 768px) {
+            .control-panel {
+                padding: 15px;
+            }
+            
+            button {
+                padding: 8px 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>ESP32-S3 CAM</h1>
+    
+    <div class="video-container">
+        <canvas id="videoCanvas"></canvas>
+    </div>
+    
+    <div class="control-panel">        
+        <div class="control-group">
+            <label for="filename">保存图片文件名:</label>
+            <input type="text" id="filename" placeholder="输入文件名(可选)">
+            <button id="saveBtn">保存当前帧</button>
+        </div>
+        <div class="control-group">
+            <label for="command">控制命令:</label>
+            <input type="text" id="command" placeholder='输入控制命令...'>
+            <button id="sendCmd">发送命令</button>
+        </div>
+        
+        <div class="control-group">
+            <label>连接状态:</label>
+            <div id="status">等待连接...</div>
+        </div>
+    </div>
+
+    <script>
+        class ESP32VideoClient {
+            constructor() {
+                this.videoCanvas = document.getElementById('videoCanvas');
+                this.ctx = this.videoCanvas.getContext('2d');
+                this.ws = null;
+                this.initWebSocket();
+                this.setupEventListeners();
+            }
+
+            initWebSocket() {
+                const wsUrl = `ws://${window.location.hostname}:81/ws`;
+                this.ws = new WebSocket(wsUrl);
+                clearInterval(this.pingInterval);
+                this.pingInterval = setInterval(() => {
+                        if (this.ws.readyState === WebSocket.OPEN) this.ws.send('PING');
+                    }, 30000);
+
+                this.ws.binaryType = 'arraybuffer';
+                
+                this.ws.onopen = () => {
+                    this.updateStatus('已连接到ESP32-S3 WebSocket服务器');
+                };
+                
+                this.ws.onmessage = (event) => {
+                    if (event.data instanceof ArrayBuffer) {
+                        this.displayVideoFrame(event.data);
+                    }
+                    else {
+                        const receivedData = event.data.trim();
+                        if (event.data === "ws_send_req") {
+                            this.ws.send("ws_send_en");
+                            this.updateStatus("已响应命令: ws_send_en");
+                        } else {
+                            this.updateStatus(`服务器响应: ${event.data}`);
+                        }
+                    }
+                };
+                
+                this.ws.onclose = () => {
+                    this.updateStatus('连接已断开,5秒后尝试重新连接...');
+                    setTimeout(() => this.initWebSocket(), 5000);
+                };
+                
+                this.ws.onerror = (error) => {
+                    this.updateStatus(`WebSocket错误: ${error.message}`);
+                };
+            }
+
+            displayVideoFrame(frameData) {
+                const blob = new Blob([frameData], {type: 'image/jpeg'});
+                const url = URL.createObjectURL(blob);
+                const img = new Image();
+                
+                img.onload = () => {
+                    this.videoCanvas.width = img.naturalWidth;
+                    this.videoCanvas.height = img.naturalHeight;
+                    this.ctx.drawImage(img, 0, 0);
+                    URL.revokeObjectURL(url);                    
+                };
+                img.src = url;
+            }
+
+            saveCurrentFrame() {
+                const filenameInput = document.getElementById('filename');
+                const filename = filenameInput.value.trim() || 
+                    `esp32-frame-${new Date().toISOString().replace(/[:.]/g, '-')}.jpg`;
+                
+                // 创建Canvas副本
+                const canvas = document.createElement('canvas');
+                canvas.width = this.videoCanvas.width;
+                canvas.height = this.videoCanvas.height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(this.videoCanvas, 0, 0);
+                
+                // 转换为Blob并触发下载
+                canvas.toBlob(blob => {
+                    if (window.showSaveFilePicker) {
+                        // 现代浏览器支持的文件选择API
+                        this.saveWithFilePicker(blob, filename);
+                    } else {
+                        // 回退方案：直接下载
+                        this.downloadFile(blob, filename);
+                    }
+                }, 'image/jpeg', 0.85);
+            }
+
+            async saveWithFilePicker(blob, suggestedName) {
+                try {
+                    const handle = await window.showSaveFilePicker({
+                        suggestedName: suggestedName,
+                        types: [{
+                            description: 'JPEG Images',
+                            accept: {'image/jpeg': ['.jpg']}
+                        }]
+                    });
+                    
+                    const writable = await handle.createWritable();
+                    await writable.write(blob);
+                    await writable.close();
+                    
+                    this.updateStatus(`图片已保存到: ${suggestedName}`);
+                } catch (err) {
+                    console.error('保存失败:', err);
+                    this.updateStatus('保存失败: ' + err.message);
+                    // 回退到普通下载方式
+                    this.downloadFile(blob, suggestedName);
+                }
+            }
+
+            downloadFile(blob, filename) {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                
+                setTimeout(() => {
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    this.updateStatus(`图片已下载: ${filename}`);
+                }, 100);
+            }
+
+            sendCommand() {
+                const command = document.getElementById('command').value.trim();
+                if (!command) {
+                    this.updateStatus('请输入有效的命令');
+                    return;
+                }
+                
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    this.ws.send(command);
+                    //document.getElementById('command').value = '';
+                    this.updateStatus(`已发送命令: ${command}`);
+                } else {
+                    this.updateStatus('连接未就绪，请等待连接建立');
+                }
+            }
+
+            updateStatus(message) {
+                const statusElement = document.getElementById('status');
+                const timestamp = new Date().toLocaleTimeString();
+                const statusLine = `[${timestamp}] ${message}`;
+                
+                // 添加到状态显示区域
+                const line = document.createElement('div');
+                line.textContent = statusLine;
+                statusElement.appendChild(line);
+                
+                // 自动滚动到底部
+                statusElement.scrollTop = statusElement.scrollHeight;
+                
+                // 限制显示的行数
+                while (statusElement.children.length > 50) {
+                    statusElement.removeChild(statusElement.firstChild);
+                }
+            }
+
+            setupEventListeners() {
+                document.getElementById('saveBtn').addEventListener('click', () => {
+                    this.saveCurrentFrame();
+                });
+                
+                document.getElementById('sendCmd').addEventListener('click', () => {
+                    this.sendCommand();
+                });
+                
+                document.getElementById('command').addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        this.sendCommand();
+                    }
+                });
+            }
+        }
+
+        // 初始化客户端
+        document.addEventListener('DOMContentLoaded', () => {
+            window.esp32Client = new ESP32VideoClient();
+        });
+    </script>
+</body>
+</html>

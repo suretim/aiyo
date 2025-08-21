@@ -1,0 +1,4 @@
+path: templates/coco8
+train: images/train
+val: images/val
+nc: 80
