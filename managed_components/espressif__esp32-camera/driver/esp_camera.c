@@ -95,6 +95,7 @@ typedef struct {
 static const char *CAMERA_SENSOR_NVS_KEY = "sensor";
 static const char *CAMERA_PIXFORMAT_NVS_KEY = "pixformat";
 static camera_state_t *s_state = NULL;
+static camera_config_t s_saved_config;
 
 #if CONFIG_IDF_TARGET_ESP32S3 // LCD_CAM module of ESP32-S3 will generate xclk
 #define CAMERA_ENABLE_OUT_CLOCK(v)
@@ -111,55 +112,55 @@ typedef struct {
 
 static const sensor_func_t g_sensors[] = {
 #if CONFIG_OV7725_SUPPORT
-    {ov7725_detect, ov7725_init},
+    {esp32_camera_ov7725_detect, esp32_camera_ov7725_init},
 #endif
 #if CONFIG_OV7670_SUPPORT
-    {ov7670_detect, ov7670_init},
+    {esp32_camera_ov7670_detect, esp32_camera_ov7670_init},
 #endif
 #if CONFIG_OV2640_SUPPORT
-    {ov2640_detect, ov2640_init},
+    {esp32_camera_ov2640_detect, esp32_camera_ov2640_init},
 #endif
 #if CONFIG_OV3660_SUPPORT
-    {ov3660_detect, ov3660_init},
+    {esp32_camera_ov3660_detect, esp32_camera_ov3660_init},
 #endif
 #if CONFIG_OV5640_SUPPORT
-    {ov5640_detect, ov5640_init},
+    {esp32_camera_ov5640_detect, esp32_camera_ov5640_init},
 #endif
 #if CONFIG_NT99141_SUPPORT
-    {nt99141_detect, nt99141_init},
+    {esp32_camera_nt99141_detect, esp32_camera_nt99141_init},
 #endif
 #if CONFIG_GC2145_SUPPORT
-    {gc2145_detect, gc2145_init},
+    {esp32_camera_gc2145_detect, esp32_camera_gc2145_init},
 #endif
 #if CONFIG_GC032A_SUPPORT
-    {gc032a_detect, gc032a_init},
+    {esp32_camera_gc032a_detect, esp32_camera_gc032a_init},
 #endif
 #if CONFIG_GC0308_SUPPORT
-    {gc0308_detect, gc0308_init},
+    {esp32_camera_gc0308_detect, esp32_camera_gc0308_init},
 #endif
 #if CONFIG_BF3005_SUPPORT
-    {bf3005_detect, bf3005_init},
+    {esp32_camera_bf3005_detect, esp32_camera_bf3005_init},
 #endif
 #if CONFIG_BF20A6_SUPPORT
-    {bf20a6_detect, bf20a6_init},
+    {esp32_camera_bf20a6_detect, esp32_camera_bf20a6_init},
 #endif
 #if CONFIG_SC101IOT_SUPPORT
-    {sc101iot_detect, sc101iot_init},
+    {esp32_camera_sc101iot_detect, esp32_camera_sc101iot_init},
 #endif
 #if CONFIG_SC030IOT_SUPPORT
-    {sc030iot_detect, sc030iot_init},
+    {esp32_camera_sc030iot_detect, esp32_camera_sc030iot_init},
 #endif
 #if CONFIG_SC031GS_SUPPORT
-    {sc031gs_detect, sc031gs_init},
+    {esp32_camera_sc031gs_detect, esp32_camera_sc031gs_init},
 #endif
 #if CONFIG_MEGA_CCM_SUPPORT
-    {mega_ccm_detect, mega_ccm_init},
+    {esp32_camera_mega_ccm_detect, esp32_camera_mega_ccm_init},
 #endif
 #if CONFIG_HM1055_SUPPORT
-    {hm1055_detect, hm1055_init},
+    {esp32_camera_hm1055_detect, esp32_camera_hm1055_init},
 #endif
 #if CONFIG_HM0360_SUPPORT
-    {hm0360_detect, hm0360_init},
+    {esp32_camera_hm0360_detect, esp32_camera_hm0360_init},
 #endif
 };
 
@@ -201,7 +202,7 @@ static esp_err_t camera_probe(const camera_config_t *config, camera_model_t *out
         conf.mode = GPIO_MODE_OUTPUT;
         gpio_config(&conf);
 
-        // carefull, logic is inverted compared to reset pin
+        // careful, logic is inverted compared to reset pin
         gpio_set_level(config->pin_pwdn, 1);
         vTaskDelay(10 / portTICK_PERIOD_MS);
         gpio_set_level(config->pin_pwdn, 0);
@@ -298,6 +299,7 @@ static pixformat_t get_output_data_format(camera_conv_mode_t conv_mode)
 esp_err_t esp_camera_init(const camera_config_t *config)
 {
     esp_err_t err;
+    s_saved_config = *config;
     err = cam_init(config);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Camera init failed with error 0x%x", err);
@@ -516,4 +518,33 @@ bool esp_camera_available_frames(void)
         return false;
     }
     return cam_get_available_frames();
+}
+
+esp_err_t esp_camera_reconfigure(const camera_config_t *config)
+{
+    if (!config) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (s_state) {
+        esp_err_t err = esp_camera_deinit();
+        if (err != ESP_OK) {
+            return err;
+        }
+    }
+    s_saved_config = *config;
+    return esp_camera_init(&s_saved_config);
+}
+
+esp_err_t esp_camera_set_psram_mode(bool enable)
+{
+    cam_set_psram_mode(enable);
+    if (!s_state) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return esp_camera_reconfigure(&s_saved_config);
+}
+
+bool esp_camera_get_psram_mode(void)
+{
+    return cam_get_psram_mode();
 }

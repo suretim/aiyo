@@ -42,6 +42,22 @@ menu "Camera configuration"
             Enable this option if you want to use the OV5640.
             Disable this option to save memory.
 
+    config CAMERA_AF_SUPPORT
+        bool "Enable autofocus (OV5640)"
+        depends on OV5640_SUPPORT
+        default n
+        help
+            Enable OV5640 autofocus support via the esp_camera_af API.
+            If disabled, the AF API will return ESP_ERR_NOT_SUPPORTED.
+
+    config CAMERA_AF_DEFAULT_TIMEOUT_MS
+        int "Autofocus default timeout (ms)"
+        depends on CAMERA_AF_SUPPORT
+        range 100 20000
+        default 2000
+        help
+            Default timeout used for autofocus operations (firmware load, trigger/wait).
+
     config GC2145_SUPPORT
         bool "Support GC2145 2MP"
         default y
@@ -187,7 +203,7 @@ menu "Camera configuration"
 
     config CAMERA_TASK_STACK_SIZE
         int "CAM task stack size"
-        default 2048
+        default 4096
         help
             Camera task stack size
 
@@ -213,6 +229,14 @@ menu "Camera configuration"
         help
             Maximum value of DMA buffer
             Larger values may fail to allocate due to insufficient contiguous memory blocks, and smaller value may cause DMA interrupt to be too frequent.
+
+    config CAMERA_PSRAM_DMA
+        bool "Enable PSRAM DMA mode by default"
+        depends on IDF_TARGET_ESP32S2 || IDF_TARGET_ESP32S3
+        default n
+        help
+            Enable DMA transfers directly from PSRAM on supported targets
+            (ESP32-S2 and ESP32-S3) by default.
 
     choice CAMERA_JPEG_MODE_FRAME_SIZE_OPTION
         prompt "JPEG mode frame size option"

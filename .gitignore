@@ -4,6 +4,11 @@ variables.data*
 *.npy
 *.npz
 *.h5
+*.bin
+*.tflite
+*.onnx
+*.jpg
+*.png
 # Ignore build directory
 best_mode/
 saved_model_best/

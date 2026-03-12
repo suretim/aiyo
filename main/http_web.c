@@ -78,6 +78,69 @@ static const char *TAG = "http_web";
 
 unsigned char interpreter_en = 0;
 httpd_handle_t server = NULL;
+#ifndef FB_GFX_H
+typedef struct {
+    uint8_t *buf;
+    int width;
+    int height;
+} fb_data_t;
+
+// 在你的 http_web.c 文件頂部添加這些函數定義
+
+// 自定義繪圖函數
+static void draw_fast_vline(uint8_t *buf, int width, int height, 
+                           int x, int y, int h, uint16_t color) {
+    if (x < 0 || x >= width) return;
+    if (y < 0) {
+        h += y;
+        y = 0;
+    }
+    if (y + h > height) {
+        h = height - y;
+    }
+    if (h <= 0) return;
+    
+    for (int i = 0; i < h; i++) {
+        uint16_t *pixel = (uint16_t *)(buf + ((y + i) * width + x) * 2);
+        *pixel = color;
+    }
+}
+
+static void draw_fast_hline(uint8_t *buf, int width, int height, 
+                           int x, int y, int w, uint16_t color) {
+    if (y < 0 || y >= height) return;
+    if (x < 0) {
+        w += x;
+        x = 0;
+    }
+    if (x + w > width) {
+        w = width - x;
+    }
+    if (w <= 0) return;
+    
+    uint16_t *line_start = (uint16_t *)(buf + (y * width + x) * 2);
+    for (int i = 0; i < w; i++) {
+        line_start[i] = color;
+    }
+}
+
+// 繪製矩形框
+static void draw_rect(uint8_t *buf, int width, int height,
+                     int x, int y, int w, int h, uint16_t color, int thickness) {
+    // 上邊
+    draw_fast_hline(buf, width, height, x, y, w, color);
+    // 下邊
+    draw_fast_hline(buf, width, height, x, y + h - thickness, w, color);
+    // 左邊
+    draw_fast_vline(buf, width, height, x, y, h, color);
+    // 右邊
+    draw_fast_vline(buf, width, height, x + w - thickness, y, h, color);
+}
+
+
+#endif
+
+
 
 static camera_config_t camera_config = {
     .pin_pwdn = CAM_PIN_PWDN,
@@ -103,7 +166,7 @@ static camera_config_t camera_config = {
     .ledc_timer = LEDC_TIMER_0,
     .ledc_channel = LEDC_CHANNEL_0,
 
-                   // |--用于图像显示  PIXFORMAT_RGB888不支持
+                   // |--用于图像显示  PIXFORMAT_RGB888 不支持
     //.pixel_format = PIXFORMAT_JPEG,//PIXFORMAT_RGB565, //YUV422,GRAYSCALE,RGB565,JPEG
     .pixel_format = PIXFORMAT_RGB565,
     .frame_size = FRAMESIZE_QVGA,//FRAMESIZE_QVGA,    //QQVGA-UXGA, For ESP32, do not use sizes above QVGA when not JPEG. The performance of the ESP32-S series has improved a lot, but JPEG mode always gives better frame rates.
@@ -238,6 +301,10 @@ void wifi_init(void)
             .ssid = "ESP32-CAM-AP",
             .password = "12345678",
             .max_connection = 4,
+            .beacon_interval = 100,  // 增加信标间隔
+        .pmf_cfg = {
+            .required = false,  // 禁用PMF
+        },
             .authmode = WIFI_AUTH_WPA2_PSK
         }
     };
@@ -268,9 +335,17 @@ SemaphoreHandle_t web_send_mutex;
 
 #define c_web_http          0
 #define c_web_socket        1
-#define c_web_server        c_web_socket
+#define c_web_server        c_web_http
 
 #if c_web_server == c_web_http
+
+// typedef struct 
+// {
+//     int         width;
+//     int         height;
+//     uint8_t     *data;
+// } fb_data_t;
+
 static esp_err_t index_handler(httpd_req_t *req);
 static esp_err_t stream_handler(httpd_req_t *req);
 static esp_err_t control_handler(httpd_req_t *req);
@@ -406,6 +481,28 @@ static esp_err_t control_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+// RGB565 轉 RGB888 公式：
+// R = (rgb565 >> 11) & 0x1F → 左移 3 位
+// G = (rgb565 >> 5) & 0x3F  → 左移 2 位
+// B = rgb565 & 0x1F        → 左移 3 位
+bool rgb565_to_rgb888(uint8_t *src, uint8_t *dst, int width, int height) {
+    for (int i = 0; i < width * height; i++) {
+        uint16_t pixel = ((uint16_t *)src)[i];
+        dst[i * 3 + 0] = (pixel >> 11) & 0x1F; // R
+        dst[i * 3 + 1] = (pixel >> 5)  & 0x3F; // G
+        dst[i * 3 + 2] = pixel & 0x1F;         // B
+    }
+    return true;
+}
+
+void bgr_to_rgb(uint8_t *src, int width, int height) {
+    for (int i = 0; i < width * height * 3; i += 3) {
+        uint8_t temp = src[i];      // B
+        src[i] = src[i + 2];        // B <- R
+        src[i + 2] = temp;          // R <- B
+    }
+}
+  
 //流处理程序
 static esp_err_t stream_handler(httpd_req_t *req)
 {
@@ -461,7 +558,9 @@ static esp_err_t stream_handler(httpd_req_t *req)
             if(rgb888_buf != NULL)
             {
                 if(fmt2rgb888(fb->buf, fb->len, fb->format, rgb888_buf) != true)
+                //if(rgb565_to_rgb888(fb->buf, rgb888_buf, fb->width, fb->height) != true)
                 {
+                   
                     ESP_LOGE(TAG, "fmt2rgb888 failed, fb: %d", fb->len);
                     esp_camera_fb_return(fb);
                     free(rgb888_buf);
@@ -470,11 +569,13 @@ static esp_err_t stream_handler(httpd_req_t *req)
                 else
                 {
                     fb_data_t fb_data;
+                    //bgr_to_rgb(rgb888_buf, fb->width, fb->height);
+                    
 
                     fb_data.width = fb->width;
                     fb_data.height = fb->height;
-                    fb_data.data = rgb888_buf;
-
+                    fb_data.buf = rgb888_buf;
+                    printf("fb_data.width=%d,fb_data.height=%d\n")
                     // rectangle box
                     int x, y, w, h;
                     uint32_t color = 0x0000ff00;                
@@ -482,10 +583,11 @@ static esp_err_t stream_handler(httpd_req_t *req)
                     y = 40;
                     w = 160;
                     h = 120;
-                    fb_gfx_drawFastHLine(&fb_data, x, y, w, color);
-                    fb_gfx_drawFastHLine(&fb_data, x, y + h - 1, w, color);
-                    fb_gfx_drawFastVLine(&fb_data, x, y, h, color);
-                    fb_gfx_drawFastVLine(&fb_data, x + w - 1, y, h, color);
+                    //fb_gfx_drawFastHLine(&fb_data, x, y, w, color);
+                    //fb_gfx_drawFastHLine(&fb_data, x, y + h - 1, w, color);
+                    //fb_gfx_drawFastVLine(&fb_data, x, y, h, color);
+                    //fb_gfx_drawFastVLine(&fb_data, x + w - 1, y, h, color);
+                    //draw_rect(&fb_data,fb_data.width,fb_data.height, x, y, w, h, color,1);
                 }            
             }
 

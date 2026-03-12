@@ -16,5 +16,8 @@
     "xhash": "cpp",
     "xstring": "cpp",
     "stack": "cpp"
-  }
+  },
+  "idf.currentSetup": "C:/Espressif/frameworks/esp-idf-v5.1.6/",
+  "idf.portWin": "COM21",
+  "idf.flashType": "UART"
 }

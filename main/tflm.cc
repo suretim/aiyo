@@ -3,7 +3,7 @@
 #include "tensorflow/lite/micro/system_setup.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 
-#include "model.h"          //aa_bb_model_f32_lite  84716
+//#include "model.h"          //aa_bb_model_f32_lite  84716
 
 #include <esp_log.h>
 #include "esp_timer.h"
@@ -21,24 +21,62 @@
 #define THRESHOLD               0.5
 
 static const char *TAG = "tflm";
-
-extern const unsigned char  g_model[];
-extern const unsigned int   MODEL_INPUT_WIDTH;
-extern const unsigned int   MODEL_INPUT_HEIGHT;
-
+ 
 namespace {
 const tflite::Model* model = nullptr;
 tflite::MicroInterpreter* interpreter = nullptr;
 TfLiteTensor* input = nullptr;
 TfLiteTensor* output = nullptr;
 
+typedef struct 
+{
+    int         width;
+    int         height;
+    uint8_t     *data;
+} fb_data_t;
+
+
 static uint8_t *tensor_arena = nullptr;
 } 
 
+#define INPUT_IMAGE_WIDTH       320
+#define INPUT_IMAGE_HEIGHT      240
+#define MODEL_INPUT_CHANNELS    3
+#define NUM_CLASSES             2
+#define THRESHOLD               0.5
+const unsigned int MODEL_INPUT_WIDTH = 96; //224 160 96;
+const unsigned int MODEL_INPUT_HEIGHT = 96;   
+const float detect_threshold = 0.08;
+const float conf_threshold = 0.1f;
+// extern const unsigned char  g_model[];
+// extern const unsigned int   MODEL_INPUT_WIDTH;
+// extern const unsigned int   MODEL_INPUT_HEIGHT;
+
+extern const unsigned char _binary_best_float32_tflite_start[] asm("_binary_micro_float32_tflite_start");
+extern const unsigned char _binary_best_float32_tflite_end[]   asm("_binary_micro_float32_tflite_end");
+const size_t   esp32_best_float32_tflite_len=_binary_best_float32_tflite_end-_binary_best_float32_tflite_start;
+
+// extern const unsigned char _binary_best_float16_tflite_start[] asm("_binary_best_float16_tflite_start");
+// extern const unsigned char _binary_best_float16_tflite_end[]   asm("_binary_best_float16_tflite_end");
+// const size_t   esp32_best_float16_tflite_len=_binary_best_float16_tflite_end-_binary_best_float16_tflite_start;
+ 
+float health_q[7]={0};
+
+float  get_health(int idx)
+{
+    return health_q[idx];
+}
 void tflite_init(void) 
 {
     unsigned int kTensorArenaSize;
-    model = tflite::GetModel(g_model);
+    for(int i=0;i<7;i++)
+    {
+        health_q[i]=0.0f;
+    }
+    model = tflite::GetModel(_binary_best_float32_tflite_start);
+    
+    
+    //model = tflite::GetModel(g_model);
     if (model->version() != TFLITE_SCHEMA_VERSION) 
     {
         MicroPrintf("Model provided is schema version %d not equal to supported "
@@ -49,6 +87,9 @@ void tflite_init(void)
     if(     MODEL_INPUT_WIDTH == 224) kTensorArenaSize = 3 * 1024 * 1024;
     else if(MODEL_INPUT_WIDTH == 160) kTensorArenaSize = 3 * 1024 * 1024 / 2;
     else                              kTensorArenaSize = 3 * 1024 * 1024 / 4;
+
+    kTensorArenaSize=1140000;
+
     if (tensor_arena == NULL) 
     {        
         tensor_arena = (uint8_t *) heap_caps_malloc(kTensorArenaSize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -57,8 +98,7 @@ void tflite_init(void)
         printf("Couldn't allocate memory of %d bytes\n", kTensorArenaSize);
         return;
     }
-
-    static tflite::MicroMutableOpResolver<13> resolver;
+    static tflite::MicroMutableOpResolver<20> resolver;
     resolver.AddConv2D();
     resolver.AddSoftmax();
     resolver.AddConcatenation();
@@ -68,7 +108,14 @@ void tflite_init(void)
     resolver.AddPad();
     resolver.AddMul();
     resolver.AddAdd();
-    resolver.AddSub();
+    resolver.AddSub(); 
+
+    resolver.AddAveragePool2D();
+    resolver.AddFullyConnected();
+    resolver.AddMean();
+    resolver.AddShape();
+    resolver.AddPack();
+
     resolver.AddMaxPool2D();
     resolver.AddResizeNearestNeighbor();
     resolver.AddLogistic(); 
@@ -194,12 +241,6 @@ struct st_box_arr
     size_t          len;               // 数组容量
 };
 
-typedef struct 
-{
-    int         width;
-    int         height;
-    uint8_t     *data;
-} fb_data_t;
 
 void fb_gfx_fillRect(fb_data_t *fb, int32_t x, int32_t y, int32_t w, int32_t h, uint32_t color)
 {

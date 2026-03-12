@@ -23,7 +23,10 @@ static const char *TAG = "sccb-ng";
 
 #define LITTLETOBIG(x) ((x << 8) | (x >> 8))
 
+#if (ESP_IDF_VERSION_MAJOR <= 5)
 #include "esp_private/i2c_platform.h"
+#endif
+
 #include "driver/i2c_master.h"
 #include "driver/i2c_types.h"
 
@@ -44,8 +47,8 @@ const int SCCB_I2C_PORT_DEFAULT = 0;
 
 /*
  The legacy I2C driver used addresses to differentiate between devices, whereas the new driver uses
- i2c_master_dev_handle_t structs which are registed to the bus.
- To avoid re-writing all camera dependant code, we simply translate the devices address to the corresponding
+ i2c_master_dev_handle_t structs which are registered to the bus.
+ To avoid re-writing all camera dependent code, we simply translate the devices address to the corresponding
  device_handle. This keeps all interfaces to the drivers identical.
  To perform this conversion the following local struct is used.
 */
@@ -80,7 +83,7 @@ int SCCB_Install_Device(uint8_t slv_addr)
     esp_err_t ret;
     i2c_master_bus_handle_t bus_handle;
 
-    if (device_count > MAX_DEVICES)
+    if (device_count >= MAX_DEVICES)
     {
         ESP_LOGE(TAG, "cannot add more than %d devices", MAX_DEVICES);
         return ESP_FAIL;
@@ -152,7 +155,7 @@ int SCCB_Use_Port(int i2c_num)
         return ESP_ERR_INVALID_ARG;
     }
     sccb_i2c_port = i2c_num;
-
+    sccb_owns_i2c_port = false; // in this case, camera doesn't own the i2c port
     return ESP_OK;
 }
 
